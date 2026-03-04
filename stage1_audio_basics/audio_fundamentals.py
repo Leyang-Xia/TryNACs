@@ -16,6 +16,7 @@ Stage 1: 音频基础
 import torch
 import torchaudio
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 # =============================================================================
@@ -181,7 +182,171 @@ class MelSpectrogramExtractor:
 
 
 # =============================================================================
-# 4. 演示：验证 STFT 的可逆性
+# 4. 可视化
+# =============================================================================
+
+def plot_waveform(
+    waveform: torch.Tensor,
+    sample_rate: int = 16000,
+    title: str = "Time Domain Waveform",
+    max_duration_s: float | None = 0.1,
+    save_path: str | None = None,
+) -> None:
+    """
+    绘制时域波形。横轴时间，纵轴振幅。
+    若信号较长，默认只显示前 max_duration_s 秒以便观察细节。
+    """
+    wav = waveform.squeeze().numpy()
+    t = np.arange(len(wav)) / sample_rate
+    if max_duration_s is not None:
+        n_show = int(sample_rate * max_duration_s)
+        wav, t = wav[:n_show], t[:n_show]
+
+    fig, ax = plt.subplots(figsize=(10, 3))
+    ax.plot(t, wav, color="#2ecc71", linewidth=0.8)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Amplitude")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(t[0], t[-1])
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+    plt.show()
+
+
+def plot_spectrum(
+    waveform: torch.Tensor,
+    sample_rate: int = 16000,
+    n_fft: int = 2048,
+    title: str = "Frequency Spectrum",
+    save_path: str | None = None,
+) -> None:
+    """
+    绘制频域频谱（整段信号的 FFT 幅度谱）。
+    横轴频率，纵轴幅度。可清晰看到信号包含哪些频率成分。
+    """
+    wav = waveform.squeeze().numpy()
+    spectrum = np.fft.rfft(wav, n=n_fft)
+    magnitude = np.abs(spectrum) / len(wav)
+    freqs = np.fft.rfftfreq(n_fft, 1 / sample_rate)
+
+    fig, ax = plt.subplots(figsize=(10, 3))
+    ax.plot(freqs, magnitude, color="#3498db", linewidth=0.8)
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel("Magnitude")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(0, sample_rate / 2)
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+    plt.show()
+
+
+def plot_spectrogram(
+    waveform: torch.Tensor,
+    sample_rate: int = 16000,
+    n_fft: int = 1024,
+    hop_length: int = 256,
+    title: str = "STFT Spectrogram (Magnitude)",
+    db_scale: bool = True,
+    save_path: str | None = None,
+) -> None:
+    """
+    绘制 STFT 时频图。横轴时间，纵轴频率，颜色表示幅度。
+    db_scale=True 时使用分贝刻度，更符合人耳感知。
+    """
+    analyzer = STFTAnalyzer(n_fft=n_fft, hop_length=hop_length)
+    spec = analyzer.stft(waveform)
+    mag = analyzer.magnitude(spec).squeeze().numpy()
+    if db_scale:
+        mag = 20 * np.log10(mag + 1e-8)
+
+    n_frames = mag.shape[1]
+    t = np.arange(n_frames) * hop_length / sample_rate
+    f = np.arange(mag.shape[0]) * sample_rate / n_fft
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    im = ax.pcolormesh(t, f, mag, shading="auto", cmap="magma")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Frequency (Hz)")
+    ax.set_title(title)
+    plt.colorbar(im, ax=ax, label="Magnitude (dB)" if db_scale else "Magnitude")
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+    plt.show()
+
+
+def plot_mel_spectrogram(
+    waveform: torch.Tensor,
+    sample_rate: int = 16000,
+    n_mels: int = 80,
+    title: str = "Mel Spectrogram",
+    log_scale: bool = True,
+    save_path: str | None = None,
+) -> None:
+    """
+    绘制梅尔频谱图。梅尔刻度模拟人耳，低频分辨率更高。
+    """
+    extractor = MelSpectrogramExtractor(sample_rate=sample_rate, n_mels=n_mels)
+    mel = (
+        extractor.log_mel(waveform).squeeze().numpy()
+        if log_scale
+        else extractor(waveform).squeeze().numpy()
+    )
+
+    hop_length = 256
+    n_frames = mel.shape[1]
+    t = np.arange(n_frames) * hop_length / sample_rate
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    im = ax.pcolormesh(t, np.arange(n_mels), mel, shading="auto", cmap="viridis")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Mel Band")
+    ax.set_title(title)
+    plt.colorbar(im, ax=ax, label="log Magnitude" if log_scale else "Magnitude")
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+    plt.show()
+
+
+def demo_visualization(save_dir: str | None = None) -> None:
+    """
+    综合演示：正弦波与复合信号的时域、频域、时频表示。
+    运行后依次显示多张图，帮助直观理解三种表示的关系。
+    """
+    sr = 16000
+    sine = generate_sine_wave(440, 0.5, sr)
+    composite = generate_composite_signal([220, 440, 880], 0.5, sr)
+
+    def _path(name: str) -> str | None:
+        return f"{save_dir}/{name}.png" if save_dir else None
+
+    print("--- 可视化演示 ---")
+    print("1. 440Hz 正弦波 - 时域")
+    plot_waveform(sine, sr, "440Hz Sine Wave (Time Domain)", max_duration_s=0.05, save_path=_path("sine_waveform"))
+
+    print("2. 440Hz 正弦波 - 频域")
+    plot_spectrum(sine, sr, title="440Hz Sine Wave (Frequency Domain)", save_path=_path("sine_spectrum"))
+
+    print("3. 复合信号 [220,440,880]Hz - 时域")
+    plot_waveform(composite, sr, "Composite Signal (Time Domain)", max_duration_s=0.05, save_path=_path("composite_waveform"))
+
+    print("4. 复合信号 - 频域")
+    plot_spectrum(composite, sr, title="Composite Signal (Frequency Domain)", save_path=_path("composite_spectrum"))
+
+    print("5. 复合信号 - STFT 时频图")
+    plot_spectrogram(composite, sr, title="Composite Signal STFT Spectrogram", save_path=_path("composite_spectrogram"))
+
+    print("6. 复合信号 - 梅尔频谱")
+    plot_mel_spectrogram(composite, sr, title="Composite Signal Mel Spectrogram", save_path=_path("composite_mel"))
+
+
+# =============================================================================
+# 5. 演示：验证 STFT 的可逆性
 # =============================================================================
 
 def demo_stft_invertibility():
@@ -255,6 +420,9 @@ if __name__ == "__main__":
     log_mel = mel_extractor.log_mel(composite)
     print(f"梅尔频谱: shape={mel.shape}  (n_mels x 时间帧)")
     print(f"对数梅尔频谱: shape={log_mel.shape}")
+
+    print("\n--- 7. 可视化演示 ---")
+    demo_visualization()  # 依次显示时域、频域、时频图
 
     print("\n✓ Stage 1 完成！你已掌握了音频信号的基本表示方法。")
     print("  下一步 → Stage 2: 构建简单的音频自编码器")
